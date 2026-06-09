@@ -94,6 +94,18 @@ function impactLabel(value) {
     return 'Low Impact';
 }
 
+function trackEvent(name, params = {}) {
+    window.MotorGuageAnalytics?.event(name, params);
+}
+
+function trackFieldChanged(fieldName, fieldValue, extra = {}) {
+    trackEvent('estimator_field_changed', {
+        field_name: fieldName,
+        field_value: fieldValue,
+        ...extra,
+    });
+}
+
 // ---- Populate Static Selects From Model Metadata ----
 function populateMakes() {
     resetSelect(makeSelect, 'Select make', false);
@@ -121,6 +133,9 @@ makeSelect.addEventListener('change', () => {
     resetSelect(transmissionSelect, 'Select variant first');
     engineInput.value = '';
     updateProgress();
+    trackFieldChanged('make', make, {
+        available_models: models.length,
+    });
 });
 
 modelSelect.addEventListener('change', () => {
@@ -133,6 +148,10 @@ modelSelect.addEventListener('change', () => {
     resetSelect(transmissionSelect, 'Select variant first');
     engineInput.value = '';
     updateProgress();
+    trackFieldChanged('model', model, {
+        make,
+        available_variants: variants.length,
+    });
 });
 
 variantSelect.addEventListener('change', () => {
@@ -149,11 +168,22 @@ variantSelect.addEventListener('change', () => {
     if (transmissions.length === 1) transmissionSelect.value = transmissions[0];
     updateEngineFromSelection();
     updateProgress();
+    trackFieldChanged('variant', variant, {
+        make,
+        model,
+        available_fuel_types: fuels.length,
+        available_transmissions: transmissions.length,
+    });
 });
 
 fuelSelect.addEventListener('change', () => {
     updateEngineFromSelection();
     updateProgress();
+    trackFieldChanged('fuel_type', fuelSelect.value, {
+        make: makeSelect.value,
+        model: modelSelect.value,
+        variant: variantSelect.value,
+    });
 });
 
 function updateEngineFromSelection() {
@@ -175,6 +205,9 @@ colorOptions.addEventListener('click', (e) => {
     colorLabel.textContent = btn.dataset.label;
     colorLabel.style.color = 'var(--text-secondary)';
     updateProgress();
+    trackEvent('estimator_color_selected', {
+        color: btn.dataset.label,
+    });
 });
 
 // ---- Progress Bar ----
@@ -205,6 +238,35 @@ function updateProgress() {
     el.addEventListener('input', updateProgress);
 });
 
+yearSelect.addEventListener('change', () => {
+    trackFieldChanged('year', yearSelect.value);
+});
+
+transmissionSelect.addEventListener('change', () => {
+    trackFieldChanged('transmission', transmissionSelect.value, {
+        make: makeSelect.value,
+        model: modelSelect.value,
+        variant: variantSelect.value,
+    });
+});
+
+citySelect.addEventListener('change', () => {
+    trackFieldChanged('registration_city', selectedOptionText(citySelect), {
+        registration_region: registrationRegion(),
+    });
+});
+
+engineInput.addEventListener('change', () => {
+    trackFieldChanged('engine_cc', Number(engineInput.value));
+});
+
+mileageInput.addEventListener('change', () => {
+    const mileageBucket = window.MotorGuageAnalytics?.mileageBucket(mileageInput.value);
+    trackFieldChanged('mileage', mileageBucket, {
+        mileage_bucket: mileageBucket,
+    });
+});
+
 // ---- Form Submission ----
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -212,15 +274,33 @@ form.addEventListener('submit', async (e) => {
     if (!colorInput.value) {
         colorLabel.textContent = 'Please select a color';
         colorLabel.style.color = '#ef4444';
+        trackEvent('estimator_validation_error', {
+            missing_field: 'color',
+        });
         return;
     }
 
     submitBtn.classList.add('loading');
     submitBtn.disabled = true;
+    trackEvent('price_estimate_started', {
+        make: makeSelect.value,
+        model: modelSelect.value,
+        variant: variantSelect.value,
+        year: Number(yearSelect.value),
+        fuel_type: fuelSelect.value,
+        transmission: transmissionSelect.value,
+        color: colorInput.value,
+        registration_region: registrationRegion(),
+        mileage_bucket: window.MotorGuageAnalytics?.mileageBucket(mileageInput.value),
+        engine_cc: Number(engineInput.value),
+    });
 
     try {
         await runEstimate();
     } catch (error) {
+        trackEvent('price_estimate_failed', {
+            error_message: error.message || 'unknown_error',
+        });
         alert(error.message || 'Could not calculate estimate. Please check your inputs.');
     }
 
@@ -269,14 +349,24 @@ async function runEstimate() {
 
     resultPanel.classList.add('visible');
 
-    if (typeof window.gtag === 'function') {
-        window.gtag('event', 'price_estimate_submitted', {
-            make: payload.make,
-            model: payload.model,
-            confidence_score: result.confidence.score,
-            confidence_label: result.confidence.label,
-        });
-    }
+    trackEvent('price_estimate_result_viewed', {
+        make: payload.make,
+        model: payload.model,
+        variant: payload.variant,
+        year: payload.year,
+        fuel_type: payload.fuel_type,
+        transmission: payload.transmission,
+        color: payload.color,
+        registration_region: payload.registered_in,
+        mileage_bucket: window.MotorGuageAnalytics?.mileageBucket(payload.mileage_km),
+        engine_cc: payload.engine_cc,
+        predicted_price_pkr: result.prediction.asking_price_pkr,
+        predicted_price_bucket: window.MotorGuageAnalytics?.priceBucket(result.prediction.asking_price_pkr),
+        range_low_pkr: result.range.low_pkr,
+        range_high_pkr: result.range.high_pkr,
+        confidence_score: result.confidence.score,
+        confidence_label: result.confidence.label,
+    });
 
     setTimeout(() => {
         resultPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -319,6 +409,7 @@ function animateCounter(el, target) {
 
 // ---- Reset ----
 resetBtn.addEventListener('click', () => {
+    trackEvent('price_estimate_reset');
     form.reset();
     resultPanel.classList.remove('visible');
     progressBar.style.width = '0%';
@@ -444,4 +535,17 @@ document.addEventListener('DOMContentLoaded', () => {
     createParticles();
     animateStatCounters();
     initScrollAnimations();
+
+    const estimatorSection = document.getElementById('estimator');
+    if (estimatorSection) {
+        const estimatorObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    trackEvent('estimator_viewed');
+                    estimatorObserver.unobserve(entry.target);
+                }
+            });
+        }, { threshold: 0.25 });
+        estimatorObserver.observe(estimatorSection);
+    }
 });

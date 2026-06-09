@@ -9,6 +9,15 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="motorguage.css">
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-S92ZJTDJJ0"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-S92ZJTDJJ0');
+</script>
+<script src="motorguage-analytics.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
 <style>
   :root {
@@ -83,7 +92,7 @@
 </style>
 <link rel="stylesheet" href="market-insights.css">
 </head>
-<body>
+<body data-page-type="market_insights">
 
 <div class="bg-particles" id="bgParticles"></div>
 
@@ -342,12 +351,19 @@ function toShare(values) {
   const total = values.reduce((sum, v) => sum + v, 0) || 1;
   return values.map(v => Number(((v / total) * 100).toFixed(1)));
 }
+function trackInsightEvent(name, params = {}) {
+  window.MotorGuageAnalytics?.event(name, params);
+}
 
 function showPage(p, trigger) {
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
   document.getElementById('page-' + p).classList.add('active');
   if (trigger) trigger.classList.add('active');
+  trackInsightEvent('market_insights_tab_viewed', {
+    tab_name: p,
+    tab_label: trigger?.textContent?.trim() || p,
+  });
 }
 
 const chartDefaults = {
@@ -636,6 +652,29 @@ buildScatter();
 </script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+  trackInsightEvent('market_insights_page_viewed');
+
+  const chartObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      const title = entry.target.querySelector('h3')?.textContent?.trim() || 'unknown_chart';
+      const page = entry.target.closest('.page')?.id?.replace('page-', '') || 'unknown';
+      trackInsightEvent('market_insights_chart_viewed', {
+        chart_title: title,
+        tab_name: page,
+      });
+      chartObserver.unobserve(entry.target);
+    });
+  }, { threshold: 0.55 });
+
+  document.querySelectorAll('.chart-card').forEach(card => chartObserver.observe(card));
+
+  document.getElementById('scatterColor')?.addEventListener('change', (event) => {
+    trackInsightEvent('market_insights_scatter_changed', {
+      color_by: event.target.value,
+    });
+  });
+
   const container = document.getElementById('bgParticles');
   if (!container) return;
   for (let i = 0; i < 24; i += 1) {
