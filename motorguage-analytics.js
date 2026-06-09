@@ -36,6 +36,8 @@
         'confidence_score',
         'confidence_label',
     ]);
+    let fallbackVisitorId = null;
+    let fallbackSessionId = null;
 
     function pageType() {
         if (document.body?.dataset?.pageType) return document.body.dataset.pageType;
@@ -93,7 +95,16 @@
         return `${prefix}_${randomId}`;
     }
 
+    function getStorage(name) {
+        try {
+            return window[name] || null;
+        } catch (error) {
+            return null;
+        }
+    }
+
     function storageGet(storage, key) {
+        if (!storage) return null;
         try {
             return storage.getItem(key);
         } catch (error) {
@@ -102,6 +113,7 @@
     }
 
     function storageSet(storage, key, value) {
+        if (!storage) return false;
         try {
             storage.setItem(key, value);
         } catch (error) {
@@ -112,19 +124,21 @@
 
     function visitorId() {
         const key = 'mg_visitor_id';
-        const existing = storageGet(window.localStorage, key);
+        const existing = storageGet(getStorage('localStorage'), key) || fallbackVisitorId;
         if (existing) return existing;
         const created = makeId('visitor');
-        storageSet(window.localStorage, key, created);
+        fallbackVisitorId = created;
+        storageSet(getStorage('localStorage'), key, created);
         return created;
     }
 
     function sessionId() {
         const key = 'mg_session_id';
-        const existing = storageGet(window.sessionStorage, key);
+        const existing = storageGet(getStorage('sessionStorage'), key) || fallbackSessionId;
         if (existing) return existing;
         const created = makeId('session');
-        storageSet(window.sessionStorage, key, created);
+        fallbackSessionId = created;
+        storageSet(getStorage('sessionStorage'), key, created);
         return created;
     }
 
