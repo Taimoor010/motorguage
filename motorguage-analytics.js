@@ -6,8 +6,36 @@
     'use strict';
 
     const SITE_BRAND = 'MotorGuage';
+    const SUPABASE_URL = 'https://xgzvkgxrqxnpkylqwlzs.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_-Ub-vZZ9ACrShCWaN3z3Gg_TlGYKgMw';
     const MAX_STRING_LENGTH = 96;
     const MAX_PARAMS = 24;
+    const DB_COLUMNS = new Set([
+        'event_name',
+        'visitor_id',
+        'session_id',
+        'page_type',
+        'page_path',
+        'referrer',
+        'make',
+        'model',
+        'variant',
+        'year',
+        'mileage_km',
+        'mileage_bucket',
+        'fuel_type',
+        'transmission',
+        'color',
+        'registration_city',
+        'registration_region',
+        'engine_cc',
+        'predicted_price_pkr',
+        'predicted_price_bucket',
+        'range_low_pkr',
+        'range_high_pkr',
+        'confidence_score',
+        'confidence_label',
+    ]);
 
     function pageType() {
         if (document.body?.dataset?.pageType) return document.body.dataset.pageType;
@@ -59,17 +87,107 @@
         return output;
     }
 
+    function makeId(prefix) {
+        const randomId = window.crypto?.randomUUID?.()
+            || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+        return `${prefix}_${randomId}`;
+    }
+
+    function storageGet(storage, key) {
+        try {
+            return storage.getItem(key);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function storageSet(storage, key, value) {
+        try {
+            storage.setItem(key, value);
+        } catch (error) {
+            return false;
+        }
+        return true;
+    }
+
+    function visitorId() {
+        const key = 'mg_visitor_id';
+        const existing = storageGet(window.localStorage, key);
+        if (existing) return existing;
+        const created = makeId('visitor');
+        storageSet(window.localStorage, key, created);
+        return created;
+    }
+
+    function sessionId() {
+        const key = 'mg_session_id';
+        const existing = storageGet(window.sessionStorage, key);
+        if (existing) return existing;
+        const created = makeId('session');
+        storageSet(window.sessionStorage, key, created);
+        return created;
+    }
+
+    function databaseRecord(eventName, payload) {
+        const record = {
+            event_name: eventName,
+            visitor_id: visitorId(),
+            session_id: sessionId(),
+            referrer: document.referrer || undefined,
+            metadata: {
+                full_url: window.location.href,
+                host: window.location.host,
+                language: navigator.language,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                screen_width: window.screen?.width,
+                screen_height: window.screen?.height,
+                viewport_width: window.innerWidth,
+                viewport_height: window.innerHeight,
+                user_agent: navigator.userAgent,
+                is_localhost: ['localhost', '127.0.0.1'].includes(window.location.hostname),
+            },
+        };
+
+        Object.entries(payload).forEach(([key, value]) => {
+            if (DB_COLUMNS.has(key)) {
+                record[key] = value;
+            } else {
+                record.metadata[key] = value;
+            }
+        });
+
+        return record;
+    }
+
+    function trackDatabaseEvent(eventName, payload) {
+        if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY || typeof fetch !== 'function') return;
+
+        const body = JSON.stringify(databaseRecord(eventName, payload));
+        fetch(`${SUPABASE_URL}/rest/v1/user_events`, {
+            method: 'POST',
+            headers: {
+                apikey: SUPABASE_PUBLISHABLE_KEY,
+                Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal',
+            },
+            body,
+            keepalive: body.length < 60000,
+        }).catch(() => {});
+    }
+
     function track(eventName, params = {}) {
         const cleanedName = cleanEventName(eventName);
         const payload = cleanParams(params);
 
         if (typeof window.gtag === 'function') {
             window.gtag('event', cleanedName, payload);
-            return;
+        } else {
+            window.dataLayer = window.dataLayer || [];
+            window.dataLayer.push(['event', cleanedName, payload]);
         }
 
-        window.dataLayer = window.dataLayer || [];
-        window.dataLayer.push(['event', cleanedName, payload]);
+        trackDatabaseEvent(cleanedName, payload);
     }
 
     function mileageBucket(value) {
